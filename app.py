@@ -245,106 +245,107 @@ class SmartMeterSystem:
         return all_readings
     
     def _process_daily_data(self, current_date: datetime.datetime):
-        """Process and save daily data."""
+        """Process and save daily data in JSON format."""
         if not self.daily_cache:
             return
-        
-        basic_data = [{
-            "date": current_date.strftime("%Y-%m-%d"),
-            "time": datetime.datetime.fromisoformat(reading.reading_time).strftime("%H:%M"),
-            "meter_ID": reading.meter_id,
-            "meter_value": reading.meter_value
-        } for reading in self.daily_cache]
-        
-        if basic_data:
-            df_basic = pd.DataFrame(basic_data)
-            daily_file = self._get_daily_file_path(current_date)
-            os.makedirs(os.path.dirname(daily_file), exist_ok=True)
-            
-            if current_date.day == 1:
-                df_basic.to_csv(daily_file, index=False)
-            else:
-                if os.path.exists(daily_file):
-                    df_basic.to_csv(daily_file, mode='a', header=False, index=False)
-                else:
-                    df_basic.to_csv(daily_file, index=False)
-    
+
+        # 组织数据结构
+        daily_data = {}
+        for reading in self.daily_cache:
+            meter_id = reading.meter_id
+            if meter_id not in daily_data:
+                daily_data[meter_id] = {
+                    "date": current_date.strftime("%Y-%m-%d"),
+                    "readings": []
+                }
+            daily_data[meter_id]["readings"].append({
+                "time": datetime.datetime.fromisoformat(reading.reading_time).strftime("%H:%M"),
+                "value": round(reading.meter_value, 3)
+            })
+
+        # 生成 JSON 文件路径
+        daily_file = self._get_daily_file_path(current_date).replace(".csv", ".json")
+        os.makedirs(os.path.dirname(daily_file), exist_ok=True)
+
+        # 保存 JSON 格式数据
+        with open(daily_file, "w", encoding="utf-8") as f:
+            json.dump(daily_data, f, ensure_ascii=False, indent=2)
+
+        # 清空缓存
         self.daily_cache.clear()
     
     def _get_daily_file_path(self, date: datetime.datetime) -> str:
         """Get the file path for daily readings."""
         month_dir = self.get_month_directory(self.daily_readings_dir, date)
-        return os.path.join(month_dir, f"readings_{date.strftime('%Y%m%d')}.csv")
+        return os.path.join(month_dir, f"readings_{date.strftime('%Y%m%d')}.json")
     
     def _archive_and_prepare_monthly_data(self, current_date: datetime.datetime):
-        """Process historical data and prepare for a new month during maintenance."""
-        # Get the first day of the current month.
+        """Archive monthly total readings using first and last readings of the month."""
         first_of_current = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         last_month = first_of_current - datetime.timedelta(days=1)
         last_month_first = last_month.replace(day=1)
-        
-        # Check the months available in daily_readings_dir.
-        available_months = []
-        if os.path.exists(self.daily_readings_dir):
-            for year_month_dir in os.listdir(self.daily_readings_dir):
-                try:
-                    year = int(year_month_dir[:4])
-                    month = int(year_month_dir[4:])
-                    if datetime.datetime(year, month, 1) >= datetime.datetime(2024, 5, 1):  # Process only data after May 2024
-                        available_months.append(datetime.datetime(year, month, 1))
-                except ValueError:
-                    continue
-        
-        # If there are fewer than 2 available months, do not archive.
-        if len(available_months) < 2:
-            return
-            
-        # Get the month to process (n-2 month)
+
+        # 归档目标月份（n-2个月前）
         month_to_process = last_month_first - datetime.timedelta(days=1)
         month_to_process = month_to_process.replace(day=1)
-        
-        # Check if the month to process is within the valid range.
+
         if month_to_process < datetime.datetime(2024, 5, 1):
             return
-            
-        # Get the related directories.
+
+        # 归档目录
         process_month_daily_dir = self.get_month_directory(self.daily_readings_dir, month_to_process)
-        process_month_monthly_dir = self.get_month_directory(self.monthly_readings_dir, month_to_process)
-        
+        process_monthly_file = os.path.join(self.monthly_readings_dir, "month_readings.json")
+
+        # 读取已有 `month_readings.json`
+        if os.path.exists(process_monthly_file):
+            with open(process_monthly_file, "r", encoding="utf-8") as f:
+                monthly_data = json.load(f)
+        else:
+            monthly_data = {}
+
+        # 用于存储每个电表的第一天和最后一天的读数
+        first_readings = {}  # {meter_id: 第一日第一个读数}
+        last_readings = {}   # {meter_id: 最后一天最后一个读数}
+
         if os.path.exists(process_month_daily_dir):
-            # Read all daily readings files.
-            daily_files = [f for f in os.listdir(process_month_daily_dir) if f.startswith('readings_')]
-            all_readings = []
-            accounts = {str(acc["meter_ID"]): acc for acc in self.load_accounts()}
-            
-            for file in daily_files:
-                file_path = os.path.join(process_month_daily_dir, file)
-                df = pd.read_csv(file_path)
-                df['meter_ID'] = df['meter_ID'].astype(str)
-                df['date_time'] = pd.to_datetime(df['date'] + ' ' + df['time'])
-                all_readings.append(df)
-            
-            if all_readings:
-                df_combined = pd.concat(all_readings, ignore_index=True)
-                df_combined['meter_value'] = df_combined['meter_value'].astype(float)
-                
-                # Process monthly consumption data.
-                self._process_monthly_consumption(df_combined, accounts, month_to_process, process_month_monthly_dir)
-                
-                # Process area analysis data.
-                self._process_area_analysis(
-                    df_combined,
-                    accounts,
-                    month_to_process,
-                    month_to_process.replace(day=calendar.monthrange(month_to_process.year, month_to_process.month)[1]),
-                    process_month_monthly_dir
-                )
-                
-                # Process area monthly summary data.
-                self._process_area_monthly_summary(df_combined, accounts, month_to_process, process_month_monthly_dir)
-        
-        # Clean up old daily readings (keep only the last two months of data).
+            for daily_file in sorted(os.listdir(process_month_daily_dir)):  # 按日期排序
+                if daily_file.endswith(".json"):
+                    daily_path = os.path.join(process_month_daily_dir, daily_file)
+
+                    with open(daily_path, 'r', encoding='utf-8') as f:
+                        daily_data = json.load(f)
+
+                    for meter_id, meter_data in daily_data.items():
+                        readings = sorted(meter_data["readings"], key=lambda x: x["time"])  # 按时间排序
+
+                        # 记录第一个读数
+                        if meter_id not in first_readings:
+                            first_readings[meter_id] = readings[0]["value"]
+
+                        # 记录最后一个读数
+                        last_readings[meter_id] = readings[-1]["value"]
+
+        # 计算月用电量
+        for meter_id in first_readings.keys():
+            if meter_id in last_readings:
+                month_key = month_to_process.strftime("%Y-%m")
+                month_total = last_readings[meter_id] - first_readings[meter_id]
+
+                # 存入 `month_readings.json`
+                if meter_id not in monthly_data:
+                    monthly_data[meter_id] = {}
+
+                monthly_data[meter_id][month_key] = round(month_total, 3)
+
+        # 保存更新后的 `month_readings.json`
+        os.makedirs(self.monthly_readings_dir, exist_ok=True)
+        with open(process_monthly_file, "w", encoding="utf-8") as f:
+            json.dump(monthly_data, f, ensure_ascii=False, indent=2)
+
+        # 清除 2 个月前的 `daily_readings`
         self._cleanup_old_readings(last_month_first)
+
+
     
     def _process_monthly_consumption(self, df_combined: pd.DataFrame, accounts: Dict, 
                                      last_month: datetime.datetime, last_month_monthly_dir: str):
@@ -439,18 +440,15 @@ class SmartMeterSystem:
             df_area.to_csv(area_analysis_file, sep=';', index=False)
     
     def _cleanup_old_readings(self, last_month_first: datetime.datetime):
-        """Clean up old daily readings."""
+        """Delete daily readings older than 2 months to save storage space."""
         if os.path.exists(self.daily_readings_dir):
             for year_month_dir in os.listdir(self.daily_readings_dir):
                 try:
                     year = int(year_month_dir[:4])
                     month = int(year_month_dir[4:])
                     dir_date = datetime.datetime(year, month, 1)
-                    
-                    # Only process data after May 2024.
-                    if dir_date < datetime.datetime(2024, 5, 1):
-                        continue
-                        
+
+                    # 仅删除 2 个月前的数据
                     if dir_date < last_month_first:
                         dir_path = os.path.join(self.daily_readings_dir, year_month_dir)
                         shutil.rmtree(dir_path)
@@ -458,29 +456,30 @@ class SmartMeterSystem:
                     continue
     
     def reset_system(self):
-        """Reset the entire system to its initial state."""
+        """Reset the entire system to its initial state, clearing all readings and accounts."""
         try:
-            # Clear directories
+            # 清空 `daily_readings` 和 `monthly_readings` 目录
             for directory in [self.daily_readings_dir, self.monthly_readings_dir]:
                 if os.path.exists(directory):
                     shutil.rmtree(directory)
                 os.makedirs(directory)
-            
-            # Reset the accounts file
+
+            # 重置账户文件
             with open(self.accounts_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
-            
-            # Reset the time file
+
+            # 重新设定时间
             self.save_current_time(datetime.datetime(2024, 5, 1))
-            
-            # Clear caches
+
+            # 清空缓存
             self.latest_readings.clear()
             self.daily_cache.clear()
-            
+
             return True
         except Exception as e:
             print(f"Reset failed: {str(e)}")
             return False
+
 
 # Flask application setup
 app = Flask(__name__, 
@@ -554,74 +553,6 @@ def meter_reading():
             "error": "Internal server error",
             "message": str(e)
         }), 500
-
-@app.route("/query")
-def query_page():
-    return render_template("query.html")
-
-@app.route("/query_usage", methods=["GET"])
-def query_usage():
-    meter_id = request.args.get("meter_id")
-    time_range = request.args.get("time_range")
-
-    if not meter_id or not time_range:
-        return jsonify({"error": "NO meter_id OR time_range"}), 400
-
-    current_date = datetime.datetime.today()
-    all_data = []
-
-    if time_range == "today":
-        date_str = current_date.strftime("%Y%m%d")
-        all_data = load_meter_data(meter_id, [date_str])
-    elif time_range == "last_7_days":
-        dates = [(current_date - datetime.timedelta(days=i)).strftime("%Y%m%d") for i in range(7)]
-        all_data = load_meter_data(meter_id, dates)
-    elif time_range == "this_month":
-        month_str = current_date.strftime("%Y%m")
-        dates = [f"{month_str}{str(day).zfill(2)}" for day in range(1, current_date.day + 1)]
-        all_data = load_meter_data(meter_id, dates)
-    elif time_range == "last_month":
-        first_day_last_month = (current_date.replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
-        last_month_str = first_day_last_month.strftime("%Y%m")
-        last_day = (current_date.replace(day=1) - datetime.timedelta(days=1)).day
-        dates = [f"{last_month_str}{str(day).zfill(2)}" for day in range(1, last_day + 1)]
-        all_data = load_meter_data(meter_id, dates)
-    else:
-        return jsonify({"error": "invalid timeslot"}), 400
-
-    if not all_data:
-        return jsonify({"error": "not applicable"}), 404
-
-    # Calculate electricity consumption per half hour/day
-    df = pd.DataFrame(all_data, columns=["date", "time", "meter_ID", "meter_value"])
-    df["meter_value"] = df["meter_value"].astype(float)
-    df["datetime"] = pd.to_datetime(df["date"] + " " + df["time"])
-
-    df.sort_values(by="datetime", inplace=True)
-    df["usage"] = df["meter_value"].diff()
-
-    if time_range == "today":
-        df["time"] = df["datetime"].dt.strftime("%H:%M")
-        result_df = df.groupby("time").agg({"usage": "sum"}).reset_index()
-        x_labels = result_df["time"].tolist()
-    else:
-        result_df = df.groupby("date").agg({"usage": "sum"}).reset_index()
-        x_labels = result_df["date"].tolist()
-
-    y_values = result_df["usage"].fillna(0).tolist()
-
-    return jsonify({"dates": x_labels, "usage": y_values})
-
-def load_meter_data(meter_id, date_list):
-    all_readings = []
-    for date_str in date_list:
-        month_folder = date_str[:6]  # YYYYMM
-        file_path = os.path.join(data_dir, month_folder, f"readings_{date_str}.csv")
-        if os.path.exists(file_path):
-            df = pd.read_csv(file_path)
-            df = df[df["meter_ID"] == meter_id]
-            all_readings.extend(df.values.tolist())
-    return all_readings
 
 @app.route("/api/areas", methods=["GET"])
 def get_areas():
