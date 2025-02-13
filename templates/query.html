@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
@@ -6,43 +6,107 @@
     <title>Power Usage Query</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            text-align: center;
+            width: 80%;
+            max-width: 400px;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+        input:focus {
+            outline: none;
+            border: 2px solid #007BFF;
+        }
+        button {
+            background-color: #007BFF;
+            color: white;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #error-message {
+            color: red;
+            display: none;
+            font-size: 12px;
+        }
+        #query-section {
+            display: none;
+            margin-top: 20px;
+        }
+        #chart {
+            margin-top: 20px;
+        }
+    </style>
 </head>
 <body>
 
     <div class="container">
         <h2>Login</h2>
         <label for="meter_id">Please input Meter ID:</label>
-        <input type="text" id="meter_id" placeholder="XXX-XXX-XXX" required>
-        <button onclick="login()">Enter</button>
+        <input 
+            type="text" 
+            id="meter_id" 
+            class="meter-id-input"
+            placeholder="Format: 999-999-999"
+            required
+            oninput="validateMeterId()"
+        >
+        <small id="error-message">Invalid format! Use 999-999-999.</small>
+        <button id="login-btn" onclick="login()" disabled>Enter</button>
+    </div>
 
-        <div id="query-section" style="display: none;">
-            <h2>Power Usage</h2>
-            <label for="time_range">Select timeslot:</label>
-            <select id="time_range">
-                <option value="today">Today</option>
-                <option value="last_7_days">Last 7 days</option>
-                <option value="this_month">This Month</option> 
-                <option value="last_month">Last Month</option>
-            </select>
-            <button onclick="queryUsage()">Confirm</button>
-
-            <div id="chart"></div>
-        </div>
+    <div id="query-section" class="container">
+        <h2>Power Usage</h2>
+        <label for="time_range">Select timeslot:</label>
+        <select id="time_range">
+            <option value="today">Today</option>
+            <option value="last_7_days">Last 7 days</option>
+            <option value="this_month">This Month</option>
+            <option value="last_month">Last Month</option>
+        </select>
+        <button onclick="queryUsage()">Confirm</button>
+        <div id="chart"></div>
     </div>
 
     <script>
         let meterId = null;
 
-        function login() {
-            const inputMeterId = document.getElementById("meter_id").value.trim();
-            const meterIdPattern = /^\d{3}-\d{3}-\d{3}$/; // XXX-XXX-XXX 格式校验
+        function validateMeterId() {
+            const input = document.getElementById("meter_id");
+            const errorMessage = document.getElementById("error-message");
+            const loginBtn = document.getElementById("login-btn");
+            const pattern = /^\d{3}-\d{3}-\d{3}$/;
 
-            if (!meterIdPattern.test(inputMeterId)) {
-                alert("Invalid Meter ID format. Please use XXX-XXX-XXX.");
-                return;
+            if (pattern.test(input.value)) {
+                input.style.borderColor = "green";
+                errorMessage.style.display = "none";
+                loginBtn.disabled = false;
+            } else {
+                input.style.borderColor = "red";
+                errorMessage.style.display = "block";
+                loginBtn.disabled = true;
             }
+        }
 
-            meterId = inputMeterId;
+        function login() {
+            meterId = document.getElementById("meter_id").value;
             document.getElementById("query-section").style.display = "block";
         }
 
