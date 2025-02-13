@@ -555,6 +555,74 @@ def meter_reading():
             "message": str(e)
         }), 500
 
+@app.route("/query")
+def query_page():
+    return render_template("query.html")
+
+@app.route("/query_usage")
+def query_usage():
+    meter_id = request.args.get("meter_id")
+    time_range = request.args.get("time_range")
+
+    if not meter_id or not time_range:
+        return jsonify({"error": "NO meter_id OR time_range"}), 400
+
+    current_date = datetime.datetime.today()
+    all_data = []
+
+    if time_range == "today":
+        date_str = current_date.strftime("%Y%m%d")
+        all_data = load_meter_data(meter_id, [date_str])
+    elif time_range == "last_7_days":
+        dates = [(current_date - datetime.timedelta(days=i)).strftime("%Y%m%d") for i in range(7)]
+        all_data = load_meter_data(meter_id, dates)
+    elif time_range == "this_month":
+        month_str = current_date.strftime("%Y%m")
+        dates = [f"{month_str}{str(day).zfill(2)}" for day in range(1, current_date.day + 1)]
+        all_data = load_meter_data(meter_id, dates)
+    elif time_range == "last_month":
+        first_day_last_month = (current_date.replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
+        last_month_str = first_day_last_month.strftime("%Y%m")
+        last_day = (current_date.replace(day=1) - datetime.timedelta(days=1)).day
+        dates = [f"{last_month_str}{str(day).zfill(2)}" for day in range(1, last_day + 1)]
+        all_data = load_meter_data(meter_id, dates)
+    else:
+        return jsonify({"error": "invalid timeslot"}), 400
+
+    if not all_data:
+        return jsonify({"error": "not applicable"}), 404
+
+    # Calculate electricity consumption per half hour/day
+    df = pd.DataFrame(all_data, columns=["date", "time", "meter_ID", "meter_value"])
+    df["meter_value"] = df["meter_value"].astype(float)
+    df["datetime"] = pd.to_datetime(df["date"] + " " + df["time"])
+
+    df.sort_values(by="datetime", inplace=True)
+    df["usage"] = df["meter_value"].diff()
+
+    if time_range == "today":
+        df["time"] = df["datetime"].dt.strftime("%H:%M")
+        result_df = df.groupby("time").agg({"usage": "sum"}).reset_index()
+        x_labels = result_df["time"].tolist()
+    else:
+        result_df = df.groupby("date").agg({"usage": "sum"}).reset_index()
+        x_labels = result_df["date"].tolist()
+
+    y_values = result_df["usage"].fillna(0).tolist()
+
+    return jsonify({"dates": x_labels, "usage": y_values})
+
+def load_meter_data(meter_id, date_list):
+    all_readings = []
+    for date_str in date_list:
+        month_folder = date_str[:6]  # YYYYMM
+        file_path = os.path.join(data_dir, month_folder, f"readings_{date_str}.csv")
+        if os.path.exists(file_path):
+            df = pd.read_csv(file_path)
+            df = df[df["meter_ID"] == meter_id]
+            all_readings.extend(df.values.tolist())
+    return all_readings
+
 @app.route("/api/areas", methods=["GET"])
 def get_areas():
     """Get area data from a JSON file."""

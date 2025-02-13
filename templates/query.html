@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>power usage query</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+
+    <h2>Login</h2>
+    <label for="meter_id">Please input Meter ID：</label>
+    <input type="text" id="meter_id" required>
+    <button onclick="login()">Enter</button>
+
+    <div id="query-section" style="display: none;">
+        <h2>power usage</h2>
+        <label for="time_range">Select timeslot：</label>
+        <select id="time_range">
+            <option value="today">Today</option>
+            <option value="last_7_days">Last 7 days</option>
+            <option value="this_month">Month</option>
+            <option value="last_month">Last Month</option>
+        </select>
+        <button onclick="queryUsage()">Confirm</button>
+
+        <div id="chart"></div>
+    </div>
+
+    <script>
+        let meterId = null;
+
+        function login() {
+            const inputMeterId = document.getElementById("meter_id").value;
+            if (inputMeterId.trim() === "") {
+                alert("Please input Meter ID");
+                return;
+            }
+            meterId = inputMeterId;
+            document.getElementById("query-section").style.display = "block";
+        }
+
+        function queryUsage() {
+            if (!meterId) {
+                alert("Please Login First");
+                return;
+            }
+
+            const timeRange = document.getElementById("time_range").value;
+
+            fetch(`/query_usage?meter_id=${meterId}&time_range=${timeRange}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+
+                    const dates = data.dates;
+                    const usage = data.usage;
+
+                    const lineTrace = {
+                        x: dates,
+                        y: usage,
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        name: 'Electricity Usage (Line)'
+                    };
+
+                    const barTrace = {
+                        x: dates,
+                        y: usage,
+                        type: 'bar',
+                        name: 'Electricity Usage (Bar)'
+                    };
+
+                    const layout = {
+                        title: 'Result',
+                        xaxis: { title: 'Time' },
+                        yaxis: { title: 'Electricity Usage (kWh)' }
+                    };
+
+                    Plotly.newPlot('chart', [barTrace, lineTrace], layout);
+                });
+        }
+    </script>
+
+</body>
+</html>
