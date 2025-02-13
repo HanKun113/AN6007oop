@@ -559,7 +559,7 @@ def meter_reading():
 def query_page():
     return render_template("query.html")
 
-@app.route("/query_usage")
+@app.route("/query_usage", methods=["GET"])
 def query_usage():
     meter_id = request.args.get("meter_id")
     time_range = request.args.get("time_range")
